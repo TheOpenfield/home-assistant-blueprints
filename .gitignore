@@ -1,0 +1,35 @@
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.log
+*.bak
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+Thumbs.db
+
+# Home Assistant config specific
+secrets.yaml
+.homeassistant
+
+# node/npm
+node_modules/
+
+# backups
+backup/
+*.tar.gz
+*.zip
+
+# local test artifacts
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker-compose.override.yml
+
+# Optional VS Code workspace file
+*.code-workspace

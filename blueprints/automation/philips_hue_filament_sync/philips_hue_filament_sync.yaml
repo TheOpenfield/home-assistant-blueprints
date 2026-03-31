@@ -1,125 +1,143 @@
 blueprint:
-  name: Philips Hue Filament Sync (Brightness + Color Temp) - Model LTA005
-  description: >-
-    Synchronizes a group of Philips Hue Filament light entities (model LTA005) via ZHA.
-    This blueprint is designed to keep state on/off, brightness, and color temperature in sync.
+  name: Hue Filament Sync PRO (ZHA, LTA005)
+  description: >
+    Synchronisiert Philips Hue Filament Lampen (ZHA) stabil:
+    - On/Off
+    - Helligkeit
+    - Farbtemperatur
 
-    Only use on Philips Hue devices where `manufacturer_name` is `Signify Netherlands B.V.` and `model` is `LTA005`.
+    Loop-safe, robust und optimiert für reale Nutzung.
 
   domain: automation
+
   input:
     filament_lights:
-      name: Filament lamps
-      description: Liste der Philips Hue Filament-Lampen, die synchronisiert werden sollen. Wähle exakt die Lampen aus dem gleichen Modell.
+      name: Filament Lampen
       selector:
         entity:
           domain: light
           multiple: true
+
     sync_delay:
       name: Delay (ms)
-      description: Kleine Verzögerung nach einem Sync-Aufruf, um Rückkopplungen zu vermeiden.
       default: 150
       selector:
         number:
           min: 0
-          max: 2000
+          max: 1000
           unit_of_measurement: ms
           mode: box
 
-mode: single
-max_exceeded: silent
+mode: queued
+max: 10
 
 variables:
-  filament_lights: !input filament_lights
+  lights: !input filament_lights
   delay_ms: !input sync_delay
 
 trigger:
+  # ON
   - platform: state
-    id: on_off
+    id: turn_on
     entity_id: !input filament_lights
+    from: "off"
+    to: "on"
+
+  # OFF
+  - platform: state
+    id: turn_off
+    entity_id: !input filament_lights
+    from: "on"
+    to: "off"
+
+  # Brightness
   - platform: state
     id: brightness
     entity_id: !input filament_lights
     attribute: brightness
+
+  # Color Temp
   - platform: state
     id: color_temp
     entity_id: !input filament_lights
     attribute: color_temp
-  - platform: state
-    id: color_temp_kelvin
-    entity_id: !input filament_lights
-    attribute: color_temp_kelvin
 
 condition:
+  # verhindert Selbst-Trigger
   - condition: template
-    value_template: >-
-      {{ trigger.to_state is not none
-         and trigger.to_state.context.id != this.context.id
-         and trigger.to_state.attributes.manufacturer_name == 'Signify Netherlands B.V.'
-         and trigger.to_state.attributes.model == 'LTA005' }}
+    value_template: "{{ trigger.to_state.context.id != this.context.id }}"
 
 action:
   - variables:
       source: "{{ trigger.entity_id }}"
-      target_lights: "{{ filament_lights | reject('eq', trigger.entity_id) | list }}"
-      attr_brightness: "{{ trigger.to_state.attributes.brightness if trigger.to_state is not none else None }}"
-      attr_color_temp: "{{ trigger.to_state.attributes.color_temp if trigger.to_state is not none else None }}"
-      attr_color_temp_kelvin: "{{ trigger.to_state.attributes.color_temp_kelvin if trigger.to_state is not none else None }}"
-      effective_color_temp: >-
-        {% set ct = attr_color_temp | default(None) %}
-        {% set ctk = attr_color_temp_kelvin | default(None) %}
-        {% if ct is not none %}{{ ct | int }}
-        {% elif ctk is not none %}{{ (1000000 / ctk)|round(0, 'floor')|int }}
-        {% else %}{{ none }}{% endif %}
+      targets: "{{ lights | reject('eq', source) | list }}"
+
+  # nichts tun wenn nur 1 Gerät
+  - condition: template
+    value_template: "{{ targets | count > 0 }}"
 
   - choose:
+
+      # ========================
+      # ON
+      # ========================
       - conditions:
           - condition: trigger
-            id: on_off
+            id: turn_on
         sequence:
-          - service: >-
-              "{{ 'homeassistant.turn_on' if trigger.to_state.state == 'on' else 'homeassistant.turn_off' }}"
+          - service: homeassistant.turn_on
             target:
-              entity_id: "{{ target_lights }}"
+              entity_id: "{{ targets }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
 
+      # ========================
+      # OFF
+      # ========================
+      - conditions:
+          - condition: trigger
+            id: turn_off
+        sequence:
+          - service: homeassistant.turn_off
+            target:
+              entity_id: "{{ targets }}"
+          - delay:
+              milliseconds: "{{ delay_ms }}"
+
+      # ========================
+      # BRIGHTNESS
+      # ========================
       - conditions:
           - condition: trigger
             id: brightness
         sequence:
+          - variables:
+              b: "{{ trigger.to_state.attributes.brightness | default(None) }}"
+          - condition: template
+            value_template: "{{ b is not none }}"
           - service: light.turn_on
             target:
-              entity_id: "{{ target_lights }}"
+              entity_id: "{{ targets }}"
             data:
-              brightness: "{{ attr_brightness }}"
+              brightness: "{{ b }}"
           - delay:
               milliseconds: "{{ delay_ms }}"
 
+      # ========================
+      # COLOR TEMP
+      # ========================
       - conditions:
           - condition: trigger
             id: color_temp
         sequence:
-          - service: light.turn_on
-            target:
-              entity_id: "{{ target_lights }}"
-            data:
-              color_temp: "{{ effective_color_temp }}"
-          - delay:
-              milliseconds: "{{ delay_ms }}"
-      - conditions:
-          - condition: trigger
-            id: color_temp_kelvin
-        sequence:
-          - service: light.turn_on
-            target:
-              entity_id: "{{ target_lights }}"
-            data:
-              color_temp: "{{ effective_color_temp }}"
-          - delay:
-              milliseconds: "{{ delay_ms }}"
-
-      - conditions:
+          - variables:
+              ct: "{{ trigger.to_state.attributes.color_temp | default(None) }}"
           - condition: template
-            value_template: "{{ trigger.id not in ['on_off', 'brightness', 'color_temp'] }}"
-        sequence: []
+            value_template: "{{ ct is not none }}"
+          - service: light.turn_on
+            target:
+              entity_id: "{{ targets }}"
+            data:
+              color_temp: "{{ ct }}"
+          - delay:
+              milliseconds: "{{ delay_ms }}"

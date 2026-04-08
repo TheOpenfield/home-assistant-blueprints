@@ -1,0 +1,169 @@
+# ============================================================
+# DIESE 3 BLÖCKE ANS ENDE DEINER automations.yaml ANFÜGEN
+# (nach dem letzten bestehenden "- id: ..." Block)
+# ============================================================
+
+- id: 'dynamic_light_esstisch_001'
+  alias: "Esstischlampe - Dynamisches Licht"
+  description: >
+    Passt Helligkeit und Farbtemperatur der Esstischlampe
+    basierend auf Sonnenstand und Tageszeit an.
+  mode: single
+  max_exceeded: silent
+  triggers:
+    - trigger: time_pattern
+      minutes: "/5"
+    - trigger: state
+      entity_id: sun.sun
+      attribute: elevation
+  conditions:
+    - condition: state
+      entity_id: light.esstischlampe
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.esstischlampe_manual_override
+      state: "off"
+  actions:
+    - variables:
+        min_kelvin: 2202
+        max_kelvin: 4504
+        current_hour: "{{ now().hour + (now().minute / 60) }}"
+        sunrise_hour: >
+          {% set next_r = state_attr('sun.sun', 'next_rising') %}
+          {% if next_r %}
+            {{ as_timestamp(next_r) | timestamp_custom('%H') | int
+               + as_timestamp(next_r) | timestamp_custom('%M') | int / 60 }}
+          {% else %}
+            6.0
+          {% endif %}
+        sunset_hour: >
+          {% set next_s = state_attr('sun.sun', 'next_setting') %}
+          {% if next_s %}
+            {{ as_timestamp(next_s) | timestamp_custom('%H') | int
+               + as_timestamp(next_s) | timestamp_custom('%M') | int / 60 }}
+          {% else %}
+            20.0
+          {% endif %}
+        pre_sunrise: "{{ (sunrise_hour | float) - 1 }}"
+        target_brightness: >
+          {% set h = current_hour | float %}
+          {% set ps = pre_sunrise | float %}
+          {% set ss = sunset_hour | float %}
+          {% set midday = 12.0 %}
+          {% set night_start = 1.0 %}
+          {% if h >= ps and h < midday %}
+            100
+          {% elif h >= midday and h < ss %}
+            {% set progress = (h - midday) / (ss - midday) %}
+            {{ (100 - (50 * progress)) | round(0) }}
+          {% elif h >= ss %}
+            50
+          {% elif h < night_start %}
+            50
+          {% elif h >= night_start and h < ps %}
+            1
+          {% else %}
+            50
+          {% endif %}
+        target_kelvin: >
+          {% set h = current_hour | float %}
+          {% set ps = pre_sunrise | float %}
+          {% set ss = sunset_hour | float %}
+          {% set midday = 12.0 %}
+          {% set night_start = 1.0 %}
+          {% set warm = 2202 %}
+          {% set cool = 3500 %}
+          {% set evening_warm = 2900 %}
+          {% if h >= ps and h < midday %}
+            {{ cool }}
+          {% elif h >= midday and h < ss %}
+            {% set progress = (h - midday) / (ss - midday) %}
+            {{ (cool - ((cool - evening_warm) * progress)) | round(0) }}
+          {% elif h >= ss %}
+            {% set hours_after_ss = h - ss %}
+            {% set total_hours = (24 - ss) + night_start %}
+            {% set progress = hours_after_ss / total_hours %}
+            {{ (evening_warm - ((evening_warm - warm) * progress)) | round(0) }}
+          {% elif h < night_start %}
+            {% set hours_after_ss = (24 - ss) + h %}
+            {% set total_hours = (24 - ss) + night_start %}
+            {% set progress = hours_after_ss / total_hours %}
+            {{ (evening_warm - ((evening_warm - warm) * progress)) | round(0) }}
+          {% elif h >= night_start and h < ps %}
+            {{ warm }}
+          {% else %}
+            {{ evening_warm }}
+          {% endif %}
+    - condition: template
+      value_template: >
+        {% set current_brightness = state_attr('light.esstischlampe', 'brightness')
+           | float(0) / 255 * 100 %}
+        {% set current_kelvin = state_attr('light.esstischlampe', 'color_temp_kelvin')
+           | int(3000) %}
+        {{ (current_brightness - target_brightness | float) | abs > 3
+           or (current_kelvin - target_kelvin | int) | abs > 50 }}
+    - action: light.turn_on
+      target:
+        entity_id: light.esstischlampe
+      data:
+        brightness_pct: "{{ target_brightness | int }}"
+        color_temp_kelvin: "{{ [[ target_kelvin | int, 2202 ] | max, 4504] | min }}"
+        transition: 10
+- id: 'dynamic_light_esstisch_override_detect'
+  alias: "Esstischlampe - Manual Override erkennen"
+  description: >
+    Erkennt manuelle Aenderungen an der Esstischlampe und
+    pausiert die dynamische Lichtsteuerung fuer 1 Stunde.
+    Ignoriert Aenderungen die von Automations kommen.
+  mode: single
+  max_exceeded: silent
+  triggers:
+    - trigger: state
+      entity_id: light.esstischlampe
+      attribute: brightness
+    - trigger: state
+      entity_id: light.esstischlampe
+      attribute: color_temp_kelvin
+  conditions:
+    - condition: state
+      entity_id: light.esstischlampe
+      state: "on"
+    - condition: state
+      entity_id: input_boolean.esstischlampe_manual_override
+      state: "off"
+    # Nur triggern wenn die Aenderung NICHT von einer Automation kam
+    - condition: template
+      value_template: >
+        {% set dominated_by = trigger.to_state.context.parent_id %}
+        {% set user_id = trigger.to_state.context.user_id %}
+        {% set ctx_id = trigger.to_state.context.id %}
+        {% set prev_ctx = trigger.from_state.context.id %}
+        {{ dominated_by is none
+           and ctx_id != prev_ctx
+           and user_id is not none }}
+  actions:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.esstischlampe_manual_override
+    - action: timer.start
+      target:
+        entity_id: timer.esstischlampe_manual_override
+      data:
+        duration: "01:00:00"
+
+- id: 'dynamic_light_esstisch_override_reset'
+  alias: "Esstischlampe - Manual Override aufheben"
+  description: >
+    Hebt den manuellen Override nach 1 Stunde auf,
+    damit die dynamische Lichtsteuerung wieder greift.
+  mode: single
+  triggers:
+    - trigger: event
+      event_type: timer.finished
+      event_data:
+        entity_id: timer.esstischlampe_manual_override
+  conditions: []
+  actions:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.esstischlampe_manual_override

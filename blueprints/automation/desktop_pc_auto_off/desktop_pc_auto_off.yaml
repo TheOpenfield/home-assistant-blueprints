@@ -1,0 +1,30 @@
+# ============================================================
+# DIESE AUTOMATION ANS ENDE DEINER automations.yaml ANFÜGEN
+# (nach dem letzten bestehenden "- id: ..." Block)
+# ============================================================
+
+- id: 'desktop_pc_auto_off_001'
+  alias: "Desktop PC - Automatisch ausschalten (Nacht)"
+  description: >
+    Schaltet die Eve Energy Strip Steckdose des Desktop PCs automatisch aus,
+    wenn der Stromverbrauch zwischen 22:00 und 06:00 Uhr für mindestens 1 Minute
+    unter 18W fällt (PC im Standby oder ausgeschaltet).
+  mode: single
+  max_exceeded: silent
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.eve_energy_strip_3fca_power
+    below: 18
+    for:
+      minutes: 1
+  conditions:
+  - condition: time
+    after: "22:00:00"
+    before: "06:00:00"
+  - condition: state
+    entity_id: switch.eve_energy_strip_3fca_eve_energy_strip_2
+    state: "on"
+  actions:
+  - action: switch.turn_off
+    target:
+      entity_id: switch.eve_energy_strip_3fca_eve_energy_strip_2

@@ -15,6 +15,7 @@ A collection of Home Assistant blueprints and automation templates for easy reus
 - `packages/` (multi-file setups that span several HA domains and are not importable
   blueprints, e.g. shell scripts plus `configuration.yaml` and `automations.yaml` parts)
   - `camera_motion_recording/`
+  - `circulation_pump/`
 
 ## Quickstart
 
@@ -83,6 +84,15 @@ motion sensor for the clip length and deletes clips older than 90 days.
 This is not a blueprint. It consists of three shell scripts plus snippets for
 `configuration.yaml` and `automations.yaml`. See
 `packages/camera_motion_recording/DOC.md` for setup, measured camera limits and tuning.
+
+## Hot water circulation pump on demand
+
+Directory: `packages/circulation_pump/`
+
+Runs the circulation pump for 3 minutes at a time, only when someone is home: before and
+after the phone alarms on weekday mornings, at fixed hours otherwise, hourly in the
+evening and on arrival. One shared throttle keeps runs at least 30 minutes apart. See
+`packages/circulation_pump/DOC.md`.
 
 ## Device capability check
 

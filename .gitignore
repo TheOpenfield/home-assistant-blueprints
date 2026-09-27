@@ -15,6 +15,12 @@ Thumbs.db
 secrets.yaml
 .homeassistant
 
+# Lokale Arbeitsanweisungen mit Zugangsdaten und Installationsdetails
+CLAUDE.md
+CLAUDE.local.md
+NETZWERK.md
+TRACKER_BEREINIGUNG.md
+
 # node/npm
 node_modules/
 

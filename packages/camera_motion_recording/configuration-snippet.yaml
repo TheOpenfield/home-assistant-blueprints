@@ -1,0 +1,35 @@
+# ============================================================
+# DIESEN BLOCK ANS ENDE DEINER configuration.yaml ANFÜGEN
+# Erfordert einen Core-Neustart (shell_command und input_boolean
+# sind nicht reload-fähig).
+#
+# Voraussetzung: die drei Skripte aus scripts/ liegen unter /config/kamera/
+# und sind ausführbar (chmod +x).
+# ============================================================
+
+# --- Kamera Eingang (USB-Webcam an /dev/video0) ---
+
+# Macht den Aufnahmeordner im Media-Browser sichtbar.
+# "local: /media" muss mit angegeben werden, sonst geht der Standardordner verloren.
+homeassistant:
+  media_dirs:
+    local: /media
+    kamera: /share/kamera
+
+input_boolean:
+  # Hauptschalter zum Scharf-/Unscharfschalten der Bewegungsaufnahme.
+  kamera_eingang_aktiv:
+    name: Kamera Eingang aktiv
+    icon: mdi:cctv
+  # Manuelle Aufnahme: an = Aufnahme laeuft, aus = Aufnahme beendet.
+  kamera_eingang_manuell:
+    name: Kamera Eingang - Aufnahme
+    icon: mdi:record-rec
+
+# Wichtig: nur Skriptaufrufe, keine Inline-Shell-Logik und keine Jinja-Templates.
+# Ein shell_command mit Template scheitert bei Shell-Syntax kommentarlos mit
+# "return code: 1", ohne dass HA stdout/stderr protokolliert.
+shell_command:
+  kamera_rec_start: sh /config/kamera/rec_start.sh
+  kamera_rec_stop: sh /config/kamera/rec_stop.sh
+  kamera_cleanup: sh /config/kamera/cleanup.sh

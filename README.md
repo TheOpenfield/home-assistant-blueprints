@@ -5,11 +5,16 @@ A collection of Home Assistant blueprints and automation templates for easy reus
 ## Project structure
 
 - `blueprints/`
-  - `automation/` (automation blueprints)
+  - `automation/` (automation blueprints and standalone automation templates)
+    - `adaptive_light/adaptive_light.yaml`
+    - `desktop_pc_auto_off/desktop_pc_auto_off.yaml`
     - `linked_entities/linked_entities.yaml`
     - `philips_hue_filament_sync/philips_hue_filament_sync.yaml`
   - `script/` (optional)
   - `scene/` (optional)
+- `packages/` (multi-file setups that span several HA domains and are not importable
+  blueprints, e.g. shell scripts plus `configuration.yaml` and `automations.yaml` parts)
+  - `camera_motion_recording/`
 
 ## Quickstart
 
@@ -66,6 +71,18 @@ This blueprint is tailored for Philips Hue Filament bulbs (model LTA005) via ZHA
    - turn one bulb on/off
    - adjust brightness
    - adjust color temperature
+
+## Motion-triggered USB webcam recording
+
+Directory: `packages/camera_motion_recording/`
+
+Turns a USB webcam into a motion-triggered recorder without any add-on. `ffmpeg` is
+launched on demand, records to `/share/kamera/` with hardware H.264 encoding, follows the
+motion sensor for the clip length and deletes clips older than 90 days.
+
+This is not a blueprint. It consists of three shell scripts plus snippets for
+`configuration.yaml` and `automations.yaml`. See
+`packages/camera_motion_recording/DOC.md` for setup, measured camera limits and tuning.
 
 ## Device capability check
 

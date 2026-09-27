@@ -1,0 +1,120 @@
+# ============================================================
+# DIESE AUTOMATIONEN ANS ENDE DEINER automations.yaml ANFÜGEN
+# (nach dem letzten bestehenden "- id: ..." Block)
+#
+# Danach: Entwicklerwerkzeuge -> YAML-Konfiguration neu laden -> Automationen.
+# Ein Core-Neustart ist dafür nicht nötig, wohl aber für die
+# configuration.yaml-Teile (input_boolean, shell_command).
+#
+# Anzupassen an die eigene Installation:
+#   binary_sensor.eve_motion_d87d   -> der eigene Bewegungsmelder
+#   notify.mobile_app_op13_vpn      -> das eigene Handy
+# ============================================================
+
+- id: kamera_eingang_motion_record
+  alias: Kamera Eingang - Aufnahme bei Bewegung
+  description: Startet bei Bewegung eine Aufnahme, wenn niemand zu Hause ist. Laeuft
+    mindestens 30 Sekunden und danach so lange weiter, bis der Bewegungsmelder wieder
+    frei ist. Harte Obergrenze 30 Minuten.
+  # single + max_exceeded verhindern parallele ffmpeg-Laeufe. Das ist zwingend:
+  # /dev/video0 kann nur von einem Prozess gleichzeitig geoeffnet werden.
+  mode: single
+  max_exceeded: silent
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.eve_motion_d87d
+    from: 'off'
+    to: 'on'
+  conditions:
+  - condition: state
+    entity_id: input_boolean.kamera_eingang_aktiv
+    state: 'on'
+  # Manuelle Aufnahme hat Vorrang, sonst wuerden sich beide ueber dieselbe
+  # PID-Datei gegenseitig abwuergen.
+  - condition: state
+    entity_id: input_boolean.kamera_eingang_manuell
+    state: 'off'
+  # zone.home ist die Anzahl anwesender Personen. below: 1 = niemand daheim.
+  # Bewusst statt fest verdrahteter person.*-Entitaeten, damit spaeter
+  # hinzukommende Personen automatisch mitzaehlen.
+  - condition: numeric_state
+    entity_id: zone.home
+    below: 1
+  actions:
+  - action: shell_command.kamera_rec_start
+  # Push laeuft ueber den kostenlosen Proxy des HA-Projekts, kein Nabu Casa noetig.
+  # continue_on_error, weil eine fehlgeschlagene Meldung nie die Aufnahme
+  # abbrechen darf. Kein Vorschaubild moeglich: die Kamera ist jetzt belegt.
+  - action: notify.mobile_app_op13_vpn
+    continue_on_error: true
+    data:
+      title: Bewegung am Eingang
+      message: "Aufnahme gestartet um {{ now().strftime('%H:%M:%S') }} Uhr"
+      data:
+        ttl: 0
+        priority: high
+        clickAction: /media-browser
+  # Mindestdauer ...
+  - delay: '00:00:30'
+  # ... danach dem Melder folgen. wait_template statt wait_for_trigger, weil es
+  # sofort greift, wenn der Melder zu diesem Zeitpunkt bereits frei ist.
+  - wait_template: "{{ is_state('binary_sensor.eve_motion_d87d', 'off') }}"
+    timeout: '00:29:30'
+    continue_on_timeout: true
+  - action: shell_command.kamera_rec_stop
+
+- id: kamera_eingang_manuell
+  alias: Kamera Eingang - Manuelle Aufnahme
+  description: Schalter an startet eine Aufnahme, Schalter aus beendet sie. Nach 30
+    Minuten schaltet sich der Schalter selbst ab, damit er nicht dauerhaft die
+    Bewegungsaufnahme blockiert.
+  # queued, damit ein schnelles An-Aus den Stop nicht verliert.
+  mode: queued
+  max: 5
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.kamera_eingang_manuell
+    to: 'on'
+    id: start
+  - trigger: state
+    entity_id: input_boolean.kamera_eingang_manuell
+    to: 'off'
+    id: stop
+  # Selbstabschaltung: schaltet den Schalter aus, was den stop-Trigger ausloest
+  # und die Aufnahme sauber beendet.
+  - trigger: state
+    entity_id: input_boolean.kamera_eingang_manuell
+    to: 'on'
+    for: '00:30:00'
+    id: timeout
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: start
+      sequence:
+      - action: shell_command.kamera_rec_start
+    - conditions:
+      - condition: trigger
+        id: stop
+      sequence:
+      - action: shell_command.kamera_rec_stop
+    - conditions:
+      - condition: trigger
+        id: timeout
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.kamera_eingang_manuell
+
+- id: kamera_eingang_cleanup
+  alias: Kamera Eingang - Alte Aufnahmen loeschen
+  description: Taeglich, loescht Clips aelter als 90 Tage sowie abgebrochene Fragmente.
+  mode: single
+  triggers:
+  - trigger: time
+    at: '04:17:00'
+  conditions: []
+  actions:
+  - action: shell_command.kamera_cleanup

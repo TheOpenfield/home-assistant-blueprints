@@ -13,15 +13,22 @@
 # ============================================================
 
 - id: umwaelzpumpe_takt
-  alias: Umwälzpumpe - Takt (Wecker, Wochenende, Abend, Ankunft)
-  description: Warmwasser-Zirkulation für 3 min, nur wenn jemand daheim ist und
-    frühestens 30 min nach dem letzten Start. Werktags 10 min vor und 20 min
-    nach jedem Wecker, ohne Wecker und am Wochenende 7-10 Uhr stündlich,
-    abends 18-22 Uhr stündlich, dazu bei Ankunft.
+  alias: Umwälzpumpe - Wecker und Ankunft
+  description: Warmwasser-Zirkulation für 3 min, 10 min vor jedem Wecker bis
+    12 Uhr, wenn dessen Besitzer daheim ist, und bei Rückkehr nach mindestens
+    30 min Abwesenheit. Frühestens 30 min nach dem letzten Start.
   triggers:
-  - trigger: time_pattern
-    minutes: /5
-    id: takt
+  # Die ID ist die Person, der der Wecker gehört.
+  - trigger: time
+    at:
+      entity_id: sensor.op13_vpn_next_alarm
+      offset: '-00:10:00'
+    id: person.jaybe
+  - trigger: time
+    at:
+      entity_id: sensor.pixel_10a_next_alarm
+      offset: '-00:10:00'
+    id: person.sari
   - trigger: state
     entity_id:
     - person.jaybe
@@ -29,84 +36,32 @@
     from: not_home
     to: home
     id: ankunft
-  variables:
-    wecker:
-    - sensor: sensor.op13_vpn_next_alarm
-      person: person.jaybe
-    - sensor: sensor.pixel_10a_next_alarm
-      person: person.sari
-    phase: >-
-      {%- set t = now() -%}
-      {%- set hm = t.strftime('%H:%M') -%}
-      {%- set werktag = t.isoweekday() <= 5 -%}
-      {%- set ns = namespace(phase='', bedarf=false, heute=false) -%}
-      {%- if trigger.id == 'ankunft' -%}
-        {%- if trigger.from_state is not none and '05:00' <= hm < '23:00'
-              and t - trigger.from_state.last_changed > timedelta(minutes=20) -%}
-          {%- set ns.phase = 'ankunft' -%}
-        {%- endif -%}
-      {%- elif '18:00' <= hm < '22:00' -%}
-        {%- set ns.phase = 'abend' -%}
-      {%- elif werktag and '04:00' <= hm < '10:45' -%}
-        {#- Wecker anwesender Personen: ein Lauf 10 min davor, einer 20 min
-            danach. Die Fenster sind breiter als der 5-min-Takt, damit ein von
-            der 30-min-Sperre blockierter Lauf nachgeholt wird.
-            Nach dem Klingeln springt der Sensor auf den nächsten Wecker,
-            deshalb gilt dann sein letzter Wechsel heute als Weckzeit.
-            Ein Wecker unterdrückt die festen Zeiten, wenn die Person daheim
-            ist oder erst nach dem Klingeln gegangen ist. -#}
-        {%- set m = timedelta(minutes=1) -%}
-        {%- for w in wecker -%}
-          {%- set daheim = is_state(w.person, 'home') -%}
-          {%- set p = expand(w.person) | first | default(none) -%}
-          {%- set st = expand(w.sensor) | first | default(none) -%}
-          {%- if st is not none -%}
-            {%- set a = st.state | as_datetime(none) -%}
-            {%- set a = a | as_local if a is not none else none -%}
-            {%- if a is not none and a.date() == t.date() and 4 <= a.hour < 10 -%}
-              {%- if daheim -%}
-                {%- set ns.heute = true -%}
-                {%- if -10 * m <= t - a < 0 * m or 20 * m <= t - a < 35 * m -%}
-                  {%- set ns.bedarf = true -%}
-                {%- endif -%}
-              {%- endif -%}
-            {%- else -%}
-              {%- set lc = st.last_changed | as_local -%}
-              {%- if lc.date() == t.date() and lc.hour >= 4 -%}
-                {%- if daheim or (p is not none and p.last_changed > st.last_changed) -%}
-                  {%- set ns.heute = true -%}
-                {%- endif -%}
-                {%- if daheim and 20 * m <= t - lc < 35 * m -%}
-                  {%- set ns.bedarf = true -%}
-                {%- endif -%}
-              {%- endif -%}
-            {%- endif -%}
-          {%- endif -%}
-        {%- endfor -%}
-        {%- if ns.bedarf -%}
-          {%- set ns.phase = 'wecker' -%}
-        {%- elif not ns.heute and '07:00' <= hm < '10:00' -%}
-          {%- set ns.phase = 'ohne_wecker' -%}
-        {%- endif -%}
-      {%- elif not werktag and '07:00' <= hm < '10:00' -%}
-        {%- set ns.phase = 'wochenende' -%}
-      {%- endif -%}
-      {{- ns.phase -}}
   conditions:
-  - condition: template
-    value_template: "{{ phase != '' }}"
-  - condition: numeric_state
-    entity_id: zone.home
-    above: 0
-  # Frühestens 30 min (Wecker, Ankunft) bzw. 60 min (feste Zeiten) nach dem
-  # letzten Start: 3 min Lauf + 26 bzw. 56 min Pause, der 5-min-Takt rundet auf.
   - condition: state
     entity_id: switch.umwalzpumpe
     state: 'off'
+  # Frühestens 30 min nach dem letzten Start. 1 min Toleranz, damit zwei
+  # Wecker im Abstand von genau 30 min beide zählen.
   - condition: template
     value_template: >-
-      {{ now() - states.switch.umwalzpumpe.last_changed
-         >= timedelta(minutes=26 if phase in ['wecker', 'ankunft'] else 56) }}
+      {{ as_timestamp(now()) - as_timestamp(this.attributes.last_triggered, 0)
+         >= 29 * 60 }}
+  - or:
+    - and:
+      - condition: trigger
+        id:
+        - person.jaybe
+        - person.sari
+      - condition: time
+        before: '12:00:00'
+      - condition: template
+        value_template: "{{ is_state(trigger.id, 'home') }}"
+    - and:
+      - condition: trigger
+        id: ankunft
+      - condition: template
+        value_template: >-
+          {{ now() - trigger.from_state.last_changed >= timedelta(minutes=30) }}
   actions:
   - action: switch.turn_on
     target:

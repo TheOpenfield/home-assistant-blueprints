@@ -89,9 +89,9 @@ This is not a blueprint. It consists of three shell scripts plus snippets for
 
 Directory: `packages/circulation_pump/`
 
-Runs the circulation pump for 3 minutes at a time, only when someone is home: before and
-after the phone alarms on weekday mornings, at fixed hours otherwise, hourly in the
-evening and on arrival. One shared throttle keeps runs at least 30 minutes apart. See
+Runs the circulation pump for 3 minutes at a time, with no fixed times: 10 minutes before
+each phone alarm until noon if its owner is home, and when someone comes home after at
+least 30 minutes away. One shared throttle keeps runs at least 30 minutes apart. See
 `packages/circulation_pump/DOC.md`.
 
 ## Device capability check

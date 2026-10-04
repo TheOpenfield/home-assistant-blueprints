@@ -3,68 +3,71 @@
 ## Overview
 
 Runs a domestic hot water circulation pump in short 3-minute bursts instead of around the
-clock. The pump hangs on a smart plug (here an Eve Energy via HomeKit Controller), so the
-automation only switches mains power.
+clock, and only right before hot water is likely to be needed: shortly before someone gets
+up, and when someone comes home. There are no fixed times. The pump hangs on a smart plug
+(here an Eve Energy via HomeKit Controller), so the automation only switches mains power.
 
 Key properties:
 
-- **Only when someone is home** (`zone.home > 0`). On holiday the pump never runs.
-- **Weekday mornings follow the phone alarms** of everyone at home: one run 10 minutes
-  before each alarm, one about 20–25 minutes after it.
-- **Fixed hours only when no alarm was set that morning**, and on weekends: 07:00, 08:00,
-  09:00.
-- **Evenings hourly** from 18:00 to 21:00.
-- **One run on arrival** of a person who was away for at least 20 minutes.
-- **One shared throttle** merges everything: at least 30 minutes between starts for alarm
-  and arrival runs, 60 minutes for fixed hours. Close alarms, an arrival just before a
-  fixed slot, or an alarm next to a fixed time never cause extra runs.
+- **10 minutes before each phone alarm**, if the alarm's owner is at home and the run
+  falls before noon. Every day, weekends included. No alarm, no run.
+- **One run on arrival** of a person who was away for at least 30 minutes, at any time of
+  day.
+- **At least 30 minutes between starts.** Two alarms or two arrivals close together
+  produce a single run.
+- **No polling.** Alarm runs use time triggers on the alarm sensors, so they fire to the
+  second and the automation does nothing in between.
 - **Safety shutoff** after 10 minutes, in case the off command got lost.
 
-Typical day: 6–8 runs, 18–24 minutes of pump time. The pump draws 20.7 W, so electricity
-is negligible (~7 Wh/day). The real saving is heat: the circulation loop no longer loses
-energy around the clock.
+Replayed against a week of real alarms and arrivals in this house: 0–4 runs a day, 14 runs
+in six days. The earlier version with fixed morning and evening hours did 46 in the same
+period. The pump draws 20.7 W, so electricity is negligible. The real saving is heat: the
+loop is only kept warm when someone is about to use it.
 
-Deployed on Home Assistant OS 2026.9.3, Raspberry Pi 4.
+Deployed on Home Assistant OS 2026.9.4, Raspberry Pi 4. Intended for a small house with
+short pipes (bathroom, kitchen, WC).
 
 ## How it works
 
-A single automation evaluates a `phase` variable every 5 minutes and on each arrival:
+| Trigger | Runs if |
+| --- | --- |
+| `time` at a `next_alarm` sensor, offset −10 min | before 12:00 and the alarm's owner is `home` |
+| `person.*` from `not_home` to `home` | the person was `not_home` for ≥ 30 min |
 
-| Phase | When | Min. gap between starts |
-| --- | --- | --- |
-| `wecker` | Weekdays, 10 min before to the alarm, and 20–35 min after it | 30 min |
-| `ohne_wecker` | Weekdays 07:00–10:00, only if nobody at home had an alarm that morning | 60 min |
-| `wochenende` | Sat/Sun 07:00–10:00 | 60 min |
-| `abend` | Daily 18:00–22:00 | 60 min |
-| `ankunft` | A person comes home after ≥ 20 min away, 05:00–23:00 | 30 min |
-| `''` | Anything else, the automation stops at the first condition | – |
+Both paths also require the pump to be off and the automation's last start to be at least
+29 minutes ago (`this.attributes.last_triggered`). The minute of tolerance lets two alarms
+exactly 30 minutes apart both count. Because the throttle uses the automation's own last
+start rather than the plug's `last_changed`, a plug that briefly goes `unavailable` during
+a Core restart does not block the next run.
 
-The gap is implemented as "pump off for at least 26 (or 56) minutes": 3 minutes of run
-time plus the pause, rounded up by the 5-minute tick. Each trace shows the `phase` value,
-so it is always visible why the pump ran or not.
+Each alarm trigger's `id` is the entity of the person who owns the phone, so one condition
+(`is_state(trigger.id, 'home')`) covers all phones. Adding a phone means adding one
+trigger.
+
+The trace shows which trigger fired and which condition blocked.
 
 ### Alarm handling
 
-The Companion app's `next_alarm` sensor holds the next alarm as a timestamp. After the
-alarm rings, the sensor jumps to the following alarm, so today's alarm is gone. The
-template therefore treats the sensor's **last change today** as the alarm time once the
-alarm has passed. If the sensor does not update at all, the stale value still produces the
-two runs.
+The Companion app's `next_alarm` sensor is a timestamp sensor. A time trigger with
+`entity_id` and `offset` fires 10 minutes before that timestamp and follows the sensor
+when the alarm is changed. Observed behaviour:
 
-An alarm suppresses the fixed hours if its owner is at home or left **after** the alarm
-rang (compared against `person.*.last_changed`). An alarm set on the phone in a hotel does
-not suppress anything at home.
+- OnePlus clock (`com.coloros.alarmclock`): the value stays until the alarm has rung, then
+  jumps to the next alarm.
+- Pixel clock: the value is set in the evening, and the sensor turns `unavailable` exactly
+  at the alarm time.
 
-The alarm windows are wider than the 5-minute tick on purpose: if the throttle blocks a
-run because another person's alarm just triggered one, the run is caught up once the
-throttle clears instead of being dropped.
+Both keep the alarm time until it rings, which is all the trigger needs.
+
+The noon cut-off is checked at the trigger time: an alarm at 12:05 still triggers at
+11:55. An alarm on a phone whose owner is away (hotel, night shift) does nothing at home.
 
 ### Arrival filtering
 
-Router-based presence (here Omada) occasionally reports everyone as away for ~33 seconds.
-The arrival trigger fires on `person.*` going from `not_home` to `home` and only counts if
-the previous `not_home` lasted at least 20 minutes. Transitions from `unknown` after a
-restart are ignored.
+Router-based presence (here Omada) occasionally reported everyone as away for ~33
+seconds. An arrival only counts if the previous `not_home` lasted at least 30 minutes,
+which also skips short errands. Transitions from `unknown` after a restart are ignored.
+There is no time window: ten days of history showed no false arrival at night.
 
 ## Requirements
 
@@ -76,20 +79,31 @@ restart are ignored.
   Restrict it to the clock app's package (app settings → Manage sensors → Next alarm →
   allow list), otherwise calendar reminders can show up as alarms. Examples:
   `com.coloros.alarmclock` (OnePlus), `com.google.android.deskclock` (Pixel).
-  A disabled or missing sensor is simply ignored.
+  A disabled or `unavailable` sensor is simply ignored.
+
+## Hygiene
+
+A single- or two-family house counts as a small installation under DVGW W 551. The rules on
+circulation run times (at most 8 hours of interruption a day, 60/55 °C) apply to large
+installations. What matters hygienically is the storage tank regularly reaching 60 °C,
+which the pump does not affect. On days without alarm and arrival the pump does not run at
+all and the return line stands still. With short pipes that is a small volume, and the same
+already happens during holidays.
 
 ## Known limits
 
-- A Core restart between 04:00 and 10:00 on a weekday changes the alarm sensors'
-  `last_changed` and is taken for an alarm: one extra run and no fixed hours that morning.
-- The second alarm run lands 20–25 minutes after the alarm because of the 5-minute tick.
-- Public holidays on weekdays count as weekdays. Without an alarm they fall back to the
-  fixed hours anyway.
+- Days without alarms and without arrivals, e.g. weekends at home, get no pre-warming. The
+  first hot water takes as long as without circulation. This is intended.
+- Two alarms less than 30 minutes apart produce one run, for the earlier alarm. The loop
+  is not re-warmed for the later one.
+- Time triggers do not catch up: a Core restart at the trigger time misses that run, and an
+  alarm set less than 10 minutes ahead does not trigger.
+- If presence drops out exactly at the trigger time, the alarm run is skipped.
 - The 3-minute run time suits this house. Check it once: right after a run, open the tap
   farthest from the boiler. If hot water does not arrive immediately, increase the delay.
 
 ## Verification
 
-- Automation trace → *Variables* → `phase`.
+- Automation trace → trigger and condition results.
 - Log errors: `ha core logs | grep -iE "umwalz|error rendering"`.
 - Pump history: `switch.umwalzpumpe`, `sensor.umwalzpumpe_power` (≈ 20.7 W while running).

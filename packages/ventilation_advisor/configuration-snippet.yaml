@@ -1,0 +1,387 @@
+# ============================================================
+# DIESEN BLOCK ANS ENDE DEINER configuration.yaml ANFÜGEN
+# Erfordert einmalig einen Core-Neustart: "lovelace:" ist nicht
+# reload-fähig, und ein erster "template:"-Block lädt die
+# Template-Integration überhaupt erst. Danach reichen die Reloads unter
+# Entwicklerwerkzeuge -> YAML (Template-Entitäten, Input numbers) bzw. die
+# Aktion homeassistant.reload_custom_templates für die .jinja-Datei.
+#
+# Voraussetzungen:
+#   /config/custom_templates/lueftung.jinja   (aus custom_templates/)
+#   /config/dashboards/lueftung.yaml          (aus dashboards/)
+#
+# Anzupassen an die eigene Installation:
+#   sensor.hydrometer_temperature / _humidity  -> Innensensor Wohnzimmer
+#   sensor.eve_room_temperature / _humidity    -> Innensensor Keller
+#   weather.forecast_home                      -> Wetter-Entität (Met.no)
+# ============================================================
+
+# --- Lüftungsempfehlung: Taupunkt und absolute Feuchte innen/außen ---
+
+template:
+  # Zeitgetriggert statt zustandsgetriggert: der Govee meldet alle paar
+  # Sekunden und würde sonst jede Ableitung tausendfach am Tag in den
+  # Recorder schreiben. Alle 10 Minuten reichen für Taupunkt und Feuchte.
+  # Die Regler sind zusätzlich Trigger, damit Änderungen sofort wirken und
+  # nach dem ersten Start nicht auf den nächsten Takt gewartet werden muss.
+  # Kein "homeassistant start"-Trigger: der Eve Room ist beim Start noch
+  # unavailable, und die letzten Zustände werden ohnehin wiederhergestellt.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+      - trigger: state
+        entity_id:
+          - input_number.lueftung_wohnzimmer_rh_ziel
+          - input_number.lueftung_wohnzimmer_rh_warn
+          - input_number.lueftung_wohnzimmer_volumen
+          - input_number.lueftung_keller_rh_ziel
+          - input_number.lueftung_keller_rh_warn
+          - input_number.lueftung_keller_volumen
+          - input_number.lueftung_delta_min
+    actions:
+      # Schicht 1: Rohwerte und Regler. float(none) statt Fehler bei
+      # unavailable/unknown. Datenalter über last_reported, das zählt auch
+      # Updates ohne Wertänderung.
+      - variables:
+          t_wz: "{{ states('sensor.hydrometer_temperature') | float(none) }}"
+          rh_wz: "{{ states('sensor.hydrometer_humidity') | float(none) }}"
+          t_ke: "{{ states('sensor.eve_room_temperature') | float(none) }}"
+          rh_ke: "{{ states('sensor.eve_room_humidity') | float(none) }}"
+          t_au: "{{ state_attr('weather.forecast_home', 'temperature') | float(none) }}"
+          rh_au: "{{ state_attr('weather.forecast_home', 'humidity') | float(none) }}"
+          td_au_met: "{{ state_attr('weather.forecast_home', 'dew_point') | float(none) }}"
+          alter_wz: >-
+            {% set o = states.sensor.hydrometer_humidity %}
+            {{ ((now() - o.last_reported).total_seconds() / 60) | round(0) if o is not none else 99999 }}
+          alter_ke: >-
+            {% set o = states.sensor.eve_room_humidity %}
+            {{ ((now() - o.last_reported).total_seconds() / 60) | round(0) if o is not none else 99999 }}
+          alter_au: >-
+            {% set o = states.weather.forecast_home %}
+            {{ ((now() - o.last_updated).total_seconds() / 60) | round(0) if o is not none else 99999 }}
+          ziel_wz: "{{ states('input_number.lueftung_wohnzimmer_rh_ziel') | float(50) }}"
+          warn_wz: "{{ states('input_number.lueftung_wohnzimmer_rh_warn') | float(60) }}"
+          vol_wz: "{{ states('input_number.lueftung_wohnzimmer_volumen') | float(55) }}"
+          ziel_ke: "{{ states('input_number.lueftung_keller_rh_ziel') | float(55) }}"
+          warn_ke: "{{ states('input_number.lueftung_keller_rh_warn') | float(60) }}"
+          vol_ke: "{{ states('input_number.lueftung_keller_volumen') | float(30) }}"
+          d_min: "{{ states('input_number.lueftung_delta_min') | float(1.0) }}"
+          # Zuordnung Status -> Farbe/Icon/Hinweis. Statisch je Zustand, erzeugt
+          # also keine zusätzlichen Recorder-Zeilen.
+          status_alert:
+            "Daten veraltet": info
+            "Nicht lüften - Kondensatgefahr": error
+            "Alles gut": success
+            "Nicht lüften - draußen feuchter": info
+            "Kaum Nutzen": info
+            "Lüften empfohlen": error
+            "Lüften sinnvoll": warning
+          status_icon:
+            "Daten veraltet": mdi:clock-alert-outline
+            "Nicht lüften - Kondensatgefahr": mdi:water-alert
+            "Alles gut": mdi:check-circle-outline
+            "Nicht lüften - draußen feuchter": mdi:window-closed-variant
+            "Kaum Nutzen": mdi:minus-circle-outline
+            "Lüften empfohlen": mdi:alert-circle
+            "Lüften sinnvoll": mdi:window-open-variant
+          status_hinweis:
+            "Daten veraltet": Sensor oder Wetterdienst liefert seit Stunden keine neuen Werte.
+            "Nicht lüften - Kondensatgefahr": Der Außen-Taupunkt liegt nahe der Wandtemperatur, Außenluft würde an kühlen Flächen kondensieren.
+            "Alles gut": Die Feuchte liegt unter dem Zielwert.
+            "Nicht lüften - draußen feuchter": Die Außenluft enthält mehr Wasser als die Raumluft.
+            "Kaum Nutzen": Die Außenluft ist kaum trockener, Lüften ändert wenig.
+            "Lüften empfohlen": Warnschwelle überschritten und die Außenluft ist deutlich trockener, jetzt stoßlüften.
+            "Lüften sinnvoll": Über dem Zielwert und die Außenluft ist trockener, Lüften bringt etwas.
+      # Schicht 2: Taupunkt und absolute Feuchte. Außen kommt der Taupunkt
+      # direkt von Met.no (genauer als aus der ganzzahligen rF gerechnet),
+      # die absolute Feuchte dann aus Temperatur und Taupunkt.
+      - variables:
+          td_wz: >-
+            {% from 'lueftung.jinja' import taupunkt %}
+            {{ taupunkt(t_wz, rh_wz) | float | round(2) if t_wz is not none and rh_wz is not none and rh_wz > 0 else none }}
+          ah_wz: >-
+            {% from 'lueftung.jinja' import abs_feuchte %}
+            {{ abs_feuchte(t_wz, rh_wz) | float | round(2) if t_wz is not none and rh_wz is not none else none }}
+          td_ke: >-
+            {% from 'lueftung.jinja' import taupunkt %}
+            {{ taupunkt(t_ke, rh_ke) | float | round(2) if t_ke is not none and rh_ke is not none and rh_ke > 0 else none }}
+          ah_ke: >-
+            {% from 'lueftung.jinja' import abs_feuchte %}
+            {{ abs_feuchte(t_ke, rh_ke) | float | round(2) if t_ke is not none and rh_ke is not none else none }}
+          td_au: >-
+            {% from 'lueftung.jinja' import taupunkt %}
+            {% if td_au_met is not none %}{{ td_au_met | round(2) }}
+            {% elif t_au is not none and rh_au is not none and rh_au > 0 %}{{ taupunkt(t_au, rh_au) | float | round(2) }}
+            {% else %}{{ none }}{% endif %}
+          ah_au: >-
+            {% from 'lueftung.jinja' import abs_feuchte_td %}
+            {{ abs_feuchte_td(t_au, td_au) | float | round(2) if t_au is not none and td_au is not none else none }}
+      # Schicht 3: Differenzen (innen minus außen, positiv = draußen trockener),
+      # Datenalter-Flags und die Statusleiter. Kondensatgefahr steht vor
+      # "Alles gut", weil "Fenster heute zu lassen" auch bei guter rF zählt.
+      # Marge 2 K im Wohnzimmer, 4 K im Keller (erdberührte Wände sind im
+      # Sommer 3-5 K kälter als die Kellerluft).
+      - variables:
+          d_wz: "{{ (ah_wz - ah_au) | round(2) if ah_wz is not none and ah_au is not none else none }}"
+          d_ke: "{{ (ah_ke - ah_au) | round(2) if ah_ke is not none and ah_au is not none else none }}"
+          veraltet_wz: "{{ d_wz is none or alter_wz > 30 or alter_au > 180 }}"
+          veraltet_ke: "{{ d_ke is none or alter_ke > 180 or alter_au > 180 }}"
+          status_wz: >-
+            {%- if veraltet_wz %}Daten veraltet
+            {%- elif td_au >= t_wz - 2 %}Nicht lüften - Kondensatgefahr
+            {%- elif rh_wz < ziel_wz %}Alles gut
+            {%- elif d_wz <= -0.5 %}Nicht lüften - draußen feuchter
+            {%- elif d_wz < d_min %}Kaum Nutzen
+            {%- elif rh_wz >= warn_wz %}Lüften empfohlen
+            {%- else %}Lüften sinnvoll
+            {%- endif %}
+          status_ke: >-
+            {%- if veraltet_ke %}Daten veraltet
+            {%- elif td_au >= t_ke - 4 %}Nicht lüften - Kondensatgefahr
+            {%- elif rh_ke < ziel_ke %}Alles gut
+            {%- elif d_ke <= -0.5 %}Nicht lüften - draußen feuchter
+            {%- elif d_ke < d_min %}Kaum Nutzen
+            {%- elif rh_ke >= warn_ke %}Lüften empfohlen
+            {%- else %}Lüften sinnvoll
+            {%- endif %}
+    # Numerische Sensoren bleiben bei veralteten Innendaten verfügbar: der
+    # letzte Messwert ist weiterhin wahr, und die Plots bekommen keine Löcher.
+    # Nur Status und Binärsensor reagieren auf das Datenalter.
+    sensor:
+      # ----- Wohnzimmer (Govee H5075) -----
+      - name: Lüftung Wohnzimmer Taupunkt
+        unique_id: lueftung_wohnzimmer_taupunkt
+        default_entity_id: sensor.lueftung_wohnzimmer_taupunkt
+        unit_of_measurement: "°C"
+        device_class: temperature
+        icon: mdi:thermometer-water
+        availability: "{{ td_wz is not none }}"
+        state: "{{ td_wz }}"
+      - name: Lüftung Wohnzimmer absolute Feuchte
+        unique_id: lueftung_wohnzimmer_absolute_feuchte
+        default_entity_id: sensor.lueftung_wohnzimmer_absolute_feuchte
+        unit_of_measurement: "g/m³"
+        device_class: absolute_humidity
+        availability: "{{ ah_wz is not none }}"
+        state: "{{ ah_wz }}"
+      - name: Lüftung Wohnzimmer Feuchtedifferenz
+        unique_id: lueftung_wohnzimmer_feuchtedifferenz
+        default_entity_id: sensor.lueftung_wohnzimmer_feuchtedifferenz
+        unit_of_measurement: "g/m³"
+        icon: mdi:delta
+        availability: "{{ d_wz is not none }}"
+        state: "{{ d_wz }}"
+      - name: Lüftung Wohnzimmer Wasser pro Luftwechsel
+        unique_id: lueftung_wohnzimmer_wasser_pro_luftwechsel
+        default_entity_id: sensor.lueftung_wohnzimmer_wasser_pro_luftwechsel
+        unit_of_measurement: g
+        icon: mdi:cup-water
+        availability: "{{ d_wz is not none }}"
+        state: "{{ (d_wz * vol_wz) | round(0) | int }}"
+      - name: Lüftung Wohnzimmer Status
+        unique_id: lueftung_wohnzimmer_status
+        default_entity_id: sensor.lueftung_wohnzimmer_status
+        icon: "{{ status_icon.get(status_wz, 'mdi:help-circle-outline') }}"
+        state: "{{ status_wz }}"
+        attributes:
+          alert_type: "{{ status_alert.get(status_wz, 'info') }}"
+          hinweis: "{{ status_hinweis.get(status_wz, '') }}"
+      # ----- Keller (Eve Room) -----
+      - name: Lüftung Keller Taupunkt
+        unique_id: lueftung_keller_taupunkt
+        default_entity_id: sensor.lueftung_keller_taupunkt
+        unit_of_measurement: "°C"
+        device_class: temperature
+        icon: mdi:thermometer-water
+        availability: "{{ td_ke is not none }}"
+        state: "{{ td_ke }}"
+      - name: Lüftung Keller absolute Feuchte
+        unique_id: lueftung_keller_absolute_feuchte
+        default_entity_id: sensor.lueftung_keller_absolute_feuchte
+        unit_of_measurement: "g/m³"
+        device_class: absolute_humidity
+        availability: "{{ ah_ke is not none }}"
+        state: "{{ ah_ke }}"
+      - name: Lüftung Keller Feuchtedifferenz
+        unique_id: lueftung_keller_feuchtedifferenz
+        default_entity_id: sensor.lueftung_keller_feuchtedifferenz
+        unit_of_measurement: "g/m³"
+        icon: mdi:delta
+        availability: "{{ d_ke is not none }}"
+        state: "{{ d_ke }}"
+      - name: Lüftung Keller Wasser pro Luftwechsel
+        unique_id: lueftung_keller_wasser_pro_luftwechsel
+        default_entity_id: sensor.lueftung_keller_wasser_pro_luftwechsel
+        unit_of_measurement: g
+        icon: mdi:cup-water
+        availability: "{{ d_ke is not none }}"
+        state: "{{ (d_ke * vol_ke) | round(0) | int }}"
+      - name: Lüftung Keller Status
+        unique_id: lueftung_keller_status
+        default_entity_id: sensor.lueftung_keller_status
+        icon: "{{ status_icon.get(status_ke, 'mdi:help-circle-outline') }}"
+        state: "{{ status_ke }}"
+        attributes:
+          alert_type: "{{ status_alert.get(status_ke, 'info') }}"
+          hinweis: "{{ status_hinweis.get(status_ke, '') }}"
+      # ----- Außen (Met.no) -----
+      - name: Lüftung Außen Temperatur
+        unique_id: lueftung_aussen_temperatur
+        default_entity_id: sensor.lueftung_aussen_temperatur
+        unit_of_measurement: "°C"
+        device_class: temperature
+        availability: "{{ t_au is not none }}"
+        state: "{{ t_au }}"
+      - name: Lüftung Außen Taupunkt
+        unique_id: lueftung_aussen_taupunkt
+        default_entity_id: sensor.lueftung_aussen_taupunkt
+        unit_of_measurement: "°C"
+        device_class: temperature
+        icon: mdi:thermometer-water
+        availability: "{{ td_au is not none }}"
+        state: "{{ td_au }}"
+      - name: Lüftung Außen absolute Feuchte
+        unique_id: lueftung_aussen_absolute_feuchte
+        default_entity_id: sensor.lueftung_aussen_absolute_feuchte
+        unit_of_measurement: "g/m³"
+        device_class: absolute_humidity
+        availability: "{{ ah_au is not none }}"
+        state: "{{ ah_au }}"
+    # Treiben die Push-Automationen und die Zeitleiste im Dashboard.
+    # unavailable bei veralteten Daten, das setzt auch das "for:" der
+    # Automation zurück. Hysterese über den eigenen Zustand: einmal an,
+    # bleibt es bis 2 %-Punkte unter der Warnschwelle bzw. 0,3 g/m³ unter
+    # der Mindestdifferenz an, damit es um die Schwellen herum nicht flattert.
+    binary_sensor:
+      - name: Lüftung Wohnzimmer empfohlen
+        unique_id: lueftung_wohnzimmer_empfohlen
+        default_entity_id: binary_sensor.lueftung_wohnzimmer_empfohlen
+        icon: mdi:weather-windy
+        availability: "{{ not veraltet_wz }}"
+        state: >-
+          {% set an = this is defined and this.state == 'on' %}
+          {{ not veraltet_wz and td_au < t_wz - 2
+             and rh_wz >= warn_wz - (2 if an else 0)
+             and d_wz >= d_min - (0.3 if an else 0) }}
+      - name: Lüftung Keller empfohlen
+        unique_id: lueftung_keller_empfohlen
+        default_entity_id: binary_sensor.lueftung_keller_empfohlen
+        icon: mdi:weather-windy
+        availability: "{{ not veraltet_ke }}"
+        state: >-
+          {% set an = this is defined and this.state == 'on' %}
+          {{ not veraltet_ke and td_au < t_ke - 4
+             and rh_ke >= warn_ke - (2 if an else 0)
+             and d_ke >= d_min - (0.3 if an else 0) }}
+
+  # Prognose: absolute Feuchte der Außenluft für die nächsten 12 Stunden aus
+  # der stündlichen Met.no-Vorhersage (enthält Temperatur und rF, aber keinen
+  # Taupunkt). Ein Sensor für alle Räume; der Vergleich mit den Räumen wird
+  # erst im Dashboard gerechnet. Fällt der Abruf aus, bleibt der alte Stand.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/30"
+    actions:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: wetter
+      - variables:
+          prognose: >-
+            {%- from 'lueftung.jinja' import abs_feuchte, taupunkt -%}
+            {%- set ns = namespace(l=[]) -%}
+            {%- for h in (wetter['weather.forecast_home'].forecast | default([]))[:12] -%}
+              {%- if h.temperature is not none and h.humidity is not none and h.humidity > 0 -%}
+                {%- set ns.l = ns.l + [{'zeit': h.datetime,
+                                        'temp': h.temperature,
+                                        'rh': h.humidity,
+                                        'td': taupunkt(h.temperature, h.humidity) | float | round(1),
+                                        'ah': abs_feuchte(h.temperature, h.humidity) | float | round(2)}] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+    sensor:
+      - name: Lüftung Außen Prognose
+        unique_id: lueftung_aussen_prognose
+        default_entity_id: sensor.lueftung_aussen_prognose
+        unit_of_measurement: "g/m³"
+        icon: mdi:chart-timeline-variant
+        availability: "{{ prognose | count > 0 }}"
+        # Zustand = trockenster Wert der nächsten 12 h
+        state: "{{ (prognose | map(attribute='ah') | list | min) if prognose | count > 0 else none }}"
+        attributes:
+          stunden: "{{ prognose }}"
+          minimum_um: "{{ (prognose | sort(attribute='ah') | first).zeit if prognose | count > 0 else none }}"
+          maximum: "{{ (prognose | map(attribute='ah') | list | max) if prognose | count > 0 else none }}"
+
+# Schwellen und Raumvolumen als Regler, im Dashboard unter "Einstellungen".
+# Bewusst ohne "initial": das würde die Regler bei jedem Neustart zurücksetzen.
+# Neu angelegte Helfer starten auf "min". Startwerte einmalig setzen:
+#   Wohnzimmer Ziel 50 % / Warn 60 % / 55 m³
+#   Keller     Ziel 55 % / Warn 60 % / 30 m³
+#   Mindest-Feuchtedifferenz 1,0 g/m³
+input_number:
+  lueftung_wohnzimmer_rh_ziel:
+    name: Wohnzimmer rF Ziel
+    min: 40
+    max: 65
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+  lueftung_wohnzimmer_rh_warn:
+    name: Wohnzimmer rF Warnschwelle
+    min: 50
+    max: 75
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-alert
+  lueftung_wohnzimmer_volumen:
+    name: Wohnzimmer Raumvolumen
+    min: 10
+    max: 200
+    step: 1
+    unit_of_measurement: "m³"
+    icon: mdi:cube-outline
+  lueftung_keller_rh_ziel:
+    name: Keller rF Ziel
+    min: 40
+    max: 65
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+  lueftung_keller_rh_warn:
+    name: Keller rF Warnschwelle
+    min: 50
+    max: 75
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-alert
+  lueftung_keller_volumen:
+    name: Keller Raumvolumen
+    min: 10
+    max: 200
+    step: 1
+    unit_of_measurement: "m³"
+    icon: mdi:cube-outline
+  lueftung_delta_min:
+    name: Mindest-Feuchtedifferenz
+    min: 0.5
+    max: 3
+    step: 0.1
+    unit_of_measurement: "g/m³"
+    icon: mdi:delta
+
+# Eigenes Dashboard im YAML-Modus. Der Schlüssel ist der URL-Pfad und muss
+# einen Bindestrich enthalten. Änderungen an der Datei: Dashboard öffnen,
+# Drei-Punkte-Menü -> Aktualisieren, kein Neustart.
+lovelace:
+  dashboards:
+    lueftung-haus:
+      mode: yaml
+      filename: dashboards/lueftung.yaml
+      title: Lüftung
+      icon: mdi:weather-windy
+      show_in_sidebar: true
+      require_admin: false

@@ -1,0 +1,121 @@
+# ============================================================
+# DIESE AUTOMATIONEN ANS ENDE DEINER automations.yaml ANFÜGEN
+# (nach dem letzten bestehenden "- id: ..." Block)
+#
+# Danach: Entwicklerwerkzeuge -> YAML-Konfiguration neu laden -> Automationen.
+# Kein Core-Neustart nötig. Voraussetzung: die Template-Entitäten aus
+# configuration-snippet.yaml laufen bereits.
+#
+# Anzupassen an die eigene Installation:
+#   notify.mobile_app_op13_vpn   -> das eigene Handy
+#   person.jaybe                 -> die eigene Person
+# ============================================================
+
+- id: lueftung_wohnzimmer_hinweis
+  alias: Lüftung Wohnzimmer - Hinweis per Push
+  description: Push, wenn die Warnschwelle seit 30 min überschritten ist und Lüften
+    laut Feuchtevergleich mit draußen etwas bringt. Tagsüber, nur wenn JayBe daheim
+    ist, frühestens 4 h nach dem letzten Hinweis.
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.lueftung_wohnzimmer_empfohlen
+    to: 'on'
+    for: '00:30:00'
+  # state-Trigger feuern nur bei Wechseln. Der Takt fängt den Fall ab, dass
+  # der Sensor beim Neuladen schon "on" war, und erinnert bei anhaltender
+  # Lage alle 4 h (Sperrzeit unten).
+  - trigger: time_pattern
+    minutes: /30
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.lueftung_wohnzimmer_empfohlen
+    state: 'on'
+    for: '00:30:00'
+  - condition: time
+    after: '07:00:00'
+    before: '22:00:00'
+  # Nur wenn JayBe daheim ist: unterwegs lässt sich kein Fenster öffnen.
+  - condition: state
+    entity_id: person.jaybe
+    state: home
+  # Frühestens 4 h nach dem letzten Hinweis für diesen Raum.
+  - condition: template
+    value_template: >-
+      {{ as_timestamp(now()) - as_timestamp(this.attributes.last_triggered, 0)
+         >= 4 * 3600 }}
+  actions:
+  # Push wie beim Kamera-Paket: kostenloser Proxy des HA-Projekts, kein Nabu Casa.
+  # tag ersetzt die vorige Meldung statt zu stapeln, channel gibt der Meldung
+  # einen eigenen Android-Kanal (eigener Ton, einzeln stummschaltbar).
+  - action: notify.mobile_app_op13_vpn
+    continue_on_error: true
+    data:
+      title: Wohnzimmer lüften
+      message: >-
+        {{ states('sensor.hydrometer_humidity') | float(0) | round(0) | int }} % rF bei
+        {{ states('sensor.hydrometer_temperature') | float(0) | round(1) | string | replace('.', ',') }} °C.
+        Taupunkt innen {{ states('sensor.lueftung_wohnzimmer_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C,
+        außen {{ states('sensor.lueftung_aussen_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C.
+        Außenluft ist {{ states('sensor.lueftung_wohnzimmer_feuchtedifferenz') | float(0) | round(1) | string | replace('.', ',') }} g/m³
+        trockener, ein Luftwechsel holt bis zu
+        {{ states('sensor.lueftung_wohnzimmer_wasser_pro_luftwechsel') | float(0) | round(0) | int }} g Wasser raus.
+      data:
+        tag: lueftung_wohnzimmer
+        channel: Lüftung
+        notification_icon: mdi:weather-windy
+        ttl: 0
+        priority: high
+        clickAction: /lueftung-haus/jetzt
+  mode: single
+  max_exceeded: silent
+
+- id: lueftung_keller_hinweis
+  alias: Lüftung Keller - Hinweis per Push
+  description: Push, wenn die Warnschwelle seit 30 min überschritten ist und Lüften
+    laut Feuchtevergleich mit draußen etwas bringt. Tagsüber, nur wenn JayBe daheim
+    ist, frühestens 4 h nach dem letzten Hinweis. Schweigt bei veralteten
+    Eve-Room-Daten, weil der Binärsensor dann unavailable ist.
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.lueftung_keller_empfohlen
+    to: 'on'
+    for: '00:30:00'
+  - trigger: time_pattern
+    minutes: /30
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.lueftung_keller_empfohlen
+    state: 'on'
+    for: '00:30:00'
+  - condition: time
+    after: '07:00:00'
+    before: '22:00:00'
+  - condition: state
+    entity_id: person.jaybe
+    state: home
+  - condition: template
+    value_template: >-
+      {{ as_timestamp(now()) - as_timestamp(this.attributes.last_triggered, 0)
+         >= 4 * 3600 }}
+  actions:
+  - action: notify.mobile_app_op13_vpn
+    continue_on_error: true
+    data:
+      title: Keller lüften
+      message: >-
+        {{ states('sensor.eve_room_humidity') | float(0) | round(0) | int }} % rF bei
+        {{ states('sensor.eve_room_temperature') | float(0) | round(1) | string | replace('.', ',') }} °C.
+        Taupunkt innen {{ states('sensor.lueftung_keller_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C,
+        außen {{ states('sensor.lueftung_aussen_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C.
+        Außenluft ist {{ states('sensor.lueftung_keller_feuchtedifferenz') | float(0) | round(1) | string | replace('.', ',') }} g/m³
+        trockener, ein Luftwechsel holt bis zu
+        {{ states('sensor.lueftung_keller_wasser_pro_luftwechsel') | float(0) | round(0) | int }} g Wasser raus.
+      data:
+        tag: lueftung_keller
+        channel: Lüftung
+        notification_icon: mdi:weather-windy
+        ttl: 0
+        priority: high
+        clickAction: /lueftung-haus/jetzt
+  mode: single
+  max_exceeded: silent

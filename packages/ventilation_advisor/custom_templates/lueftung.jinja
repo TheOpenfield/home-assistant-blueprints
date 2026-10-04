@@ -1,0 +1,34 @@
+{#- ============================================================
+    Feuchteformeln für die Lüftungsempfehlung.
+    Magnus-Formel mit den Koeffizienten nach Sonntag (1990),
+    gültig über Wasser für -45 bis +60 °C. Druckunabhängig.
+
+    Makros liefern Text, das Ergebnis daher immer mit "| float"
+    weiterverwenden. rh muss > 0 sein (Logarithmus).
+
+    Kontrollwerte: taupunkt(20, 50) = 9.25 °C,
+                   abs_feuchte(20, 50) = 8.62 g/m³
+
+    Nach Änderungen an dieser Datei:
+    Entwicklerwerkzeuge -> Aktionen -> homeassistant.reload_custom_templates
+    (ein Reload der Template-Entitäten allein liest sie nicht neu ein)
+    ============================================================ -#}
+
+{#- Taupunkt in °C aus Temperatur t (°C) und relativer Feuchte rh (%) -#}
+{%- macro taupunkt(t, rh) -%}
+{%- set a = 17.62 -%}
+{%- set b = 243.12 -%}
+{%- set alpha = log(rh / 100) + a * t / (b + t) -%}
+{{ b * alpha / (a - alpha) }}
+{%- endmacro -%}
+
+{#- Absolute Feuchte in g/m³ aus Temperatur t (°C) und relativer Feuchte rh (%) -#}
+{%- macro abs_feuchte(t, rh) -%}
+{{ 216.7 * (rh / 100) * 6.112 * e ** (17.62 * t / (243.12 + t)) / (273.15 + t) }}
+{%- endmacro -%}
+
+{#- Absolute Feuchte in g/m³ aus Temperatur t (°C) und Taupunkt td (°C).
+    Exakt, wenn der Taupunkt direkt vorliegt (Met.no liefert ihn). -#}
+{%- macro abs_feuchte_td(t, td) -%}
+{{ 216.7 * 6.112 * e ** (17.62 * td / (243.12 + td)) / (273.15 + t) }}
+{%- endmacro -%}

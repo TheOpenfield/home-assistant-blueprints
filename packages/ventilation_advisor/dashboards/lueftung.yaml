@@ -1,0 +1,274 @@
+# ============================================================
+# Dashboard "Lüftung" im YAML-Modus, eingebunden über
+#   lovelace: dashboards: lueftung-haus: filename: dashboards/lueftung.yaml
+# in der configuration.yaml (siehe configuration-snippet.yaml).
+# Ablage auf dem Host: /config/dashboards/lueftung.yaml
+#
+# Änderungen an dieser Datei: Dashboard öffnen, Drei-Punkte-Menü ->
+# Aktualisieren. Kein Neustart. Fehler im Dashboard-YAML meldet nur das
+# UI, nicht "ha core check".
+#
+# Nur eingebaute Karten, keine HACS-Resourcen nötig. Die Markdown-Karten
+# brauchen den Literal-Block "|", sonst zerreißt es die Tabellen.
+# ============================================================
+title: Lüftung
+views:
+  - title: Lüftung
+    path: jetzt
+    icon: mdi:weather-windy
+    type: sections
+    max_columns: 3
+    sections:
+      # ---------------- Wohnzimmer ----------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Wohnzimmer
+            heading_style: title
+            icon: mdi:sofa-outline
+            badges:
+              - type: entity
+                entity: sensor.hydrometer_humidity
+              - type: entity
+                entity: sensor.hydrometer_temperature
+          - type: markdown
+            content: |
+              {% set s = states.sensor.lueftung_wohnzimmer_status %}
+              {% set status = s.state if s is not none else 'Keine Daten' %}
+              <ha-alert alert-type="{{ s.attributes.alert_type if s is not none else 'info' }}" title="{{ status }}">{{ s.attributes.hinweis if s is not none else 'Template-Sensoren fehlen.' }}</ha-alert>
+
+              | | innen | außen |
+              |---|---:|---:|
+              | Temperatur | {{ states('sensor.hydrometer_temperature') | float(0) | round(1) | string | replace('.', ',') }} °C | {{ states('sensor.lueftung_aussen_temperatur') | float(0) | round(1) | string | replace('.', ',') }} °C |
+              | rel. Feuchte | {{ states('sensor.hydrometer_humidity') | float(0) | round(0) | int }} % | {{ state_attr('weather.forecast_home', 'humidity') }} % |
+              | Taupunkt | {{ states('sensor.lueftung_wohnzimmer_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C | {{ states('sensor.lueftung_aussen_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C |
+              | abs. Feuchte | {{ states('sensor.lueftung_wohnzimmer_absolute_feuchte') | float(0) | round(1) | string | replace('.', ',') }} g/m³ | {{ states('sensor.lueftung_aussen_absolute_feuchte') | float(0) | round(1) | string | replace('.', ',') }} g/m³ |
+
+              {% set d = states('sensor.lueftung_wohnzimmer_feuchtedifferenz') | float(none) %}
+              {% set g = states('sensor.lueftung_wohnzimmer_wasser_pro_luftwechsel') | float(0) %}
+              {% set v = states('input_number.lueftung_wohnzimmer_volumen') | float(0) | int %}
+              {% set dt = states('sensor.hydrometer_temperature') | float(0) - states('sensor.lueftung_aussen_temperatur') | float(0) %}
+              {% if d is not none %}
+              **Δ abs. Feuchte {{ '%+.1f' | format(d) | replace('.', ',') }} g/m³** (positiv = draußen trockener).
+              {% if g > 0 %}Ein Luftwechsel ({{ v }} m³) holt bis zu **{{ g | int }} g Wasser** raus.{% else %}Ein Luftwechsel ({{ v }} m³) brächte **{{ (-g) | int }} g Wasser** rein.{% endif %}
+              {% if dt > 0.5 %}Wärmeverlust je Luftwechsel ≈ {{ (0.34 * dt * v) | round(0) | int }} Wh, Richtwert Dauer ≈ {{ (18 / sqrt(dt)) | round(0) | int }} min.{% endif %}
+              {% endif %}
+
+              <small>Govee vor {{ ((now() - states.sensor.hydrometer_humidity.last_reported).total_seconds() / 60) | int if states.sensor.hydrometer_humidity is not none else '?' }} min, Met.no vor {{ ((now() - states.weather.forecast_home.last_updated).total_seconds() / 60) | int if states.weather.forecast_home is not none else '?' }} min</small>
+          - type: gauge
+            entity: sensor.hydrometer_humidity
+            name: Wohnzimmer rF
+            min: 20
+            max: 80
+            needle: true
+            # Statische Farbgrenzen, folgen den Reglern nicht.
+            severity:
+              green: 20
+              yellow: 50
+              red: 60
+      # ---------------- Keller ----------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Keller (Technik/Wäsche)
+            heading_style: title
+            icon: mdi:washing-machine
+            badges:
+              - type: entity
+                entity: sensor.eve_room_humidity
+              - type: entity
+                entity: sensor.eve_room_temperature
+          - type: markdown
+            content: |
+              {% set s = states.sensor.lueftung_keller_status %}
+              {% set status = s.state if s is not none else 'Keine Daten' %}
+              <ha-alert alert-type="{{ s.attributes.alert_type if s is not none else 'info' }}" title="{{ status }}">{{ s.attributes.hinweis if s is not none else 'Template-Sensoren fehlen.' }}</ha-alert>
+
+              | | innen | außen |
+              |---|---:|---:|
+              | Temperatur | {{ states('sensor.eve_room_temperature') | float(0) | round(1) | string | replace('.', ',') }} °C | {{ states('sensor.lueftung_aussen_temperatur') | float(0) | round(1) | string | replace('.', ',') }} °C |
+              | rel. Feuchte | {{ states('sensor.eve_room_humidity') | float(0) | round(0) | int }} % | {{ state_attr('weather.forecast_home', 'humidity') }} % |
+              | Taupunkt | {{ states('sensor.lueftung_keller_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C | {{ states('sensor.lueftung_aussen_taupunkt') | float(0) | round(1) | string | replace('.', ',') }} °C |
+              | abs. Feuchte | {{ states('sensor.lueftung_keller_absolute_feuchte') | float(0) | round(1) | string | replace('.', ',') }} g/m³ | {{ states('sensor.lueftung_aussen_absolute_feuchte') | float(0) | round(1) | string | replace('.', ',') }} g/m³ |
+              | Luftqualität | {{ states('sensor.eve_room_air_quality') }} / 5 | |
+
+              {% set d = states('sensor.lueftung_keller_feuchtedifferenz') | float(none) %}
+              {% set g = states('sensor.lueftung_keller_wasser_pro_luftwechsel') | float(0) %}
+              {% set v = states('input_number.lueftung_keller_volumen') | float(0) | int %}
+              {% set dt = states('sensor.eve_room_temperature') | float(0) - states('sensor.lueftung_aussen_temperatur') | float(0) %}
+              {% if d is not none %}
+              **Δ abs. Feuchte {{ '%+.1f' | format(d) | replace('.', ',') }} g/m³** (positiv = draußen trockener).
+              {% if g > 0 %}Ein Luftwechsel ({{ v }} m³) holt bis zu **{{ g | int }} g Wasser** raus.{% else %}Ein Luftwechsel ({{ v }} m³) brächte **{{ (-g) | int }} g Wasser** rein.{% endif %}
+              {% if dt > 0.5 %}Wärmeverlust je Luftwechsel ≈ {{ (0.34 * dt * v) | round(0) | int }} Wh, Richtwert Dauer ≈ {{ (18 / sqrt(dt)) | round(0) | int }} min.{% endif %}
+              {% endif %}
+
+              <small>Eve Room vor {{ ((now() - states.sensor.eve_room_humidity.last_reported).total_seconds() / 60) | int if states.sensor.eve_room_humidity is not none else '?' }} min (Luftqualität 1 = sehr gut, 5 = schlecht), Met.no vor {{ ((now() - states.weather.forecast_home.last_updated).total_seconds() / 60) | int if states.weather.forecast_home is not none else '?' }} min</small>
+          - type: gauge
+            entity: sensor.eve_room_humidity
+            name: Keller rF
+            min: 20
+            max: 80
+            needle: true
+            severity:
+              green: 20
+              yellow: 55
+              red: 60
+          # Nur sichtbar bei Sommerkondensations-Lage im Keller.
+          - type: markdown
+            content: |
+              <ha-alert alert-type="error" title="Sommerkondensation">Warme, feuchte Außenluft schlägt sich an den kühlen Kellerwänden nieder. Heute nur nachts oder gar nicht lüften.</ha-alert>
+            visibility:
+              - condition: state
+                entity: sensor.lueftung_keller_status
+                state: Nicht lüften - Kondensatgefahr
+      # ---------------- Außen und Prognose ----------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Außen (Met.no, Modellwerte)
+            heading_style: title
+            icon: mdi:weather-partly-cloudy
+            badges:
+              - type: entity
+                entity: sensor.lueftung_aussen_taupunkt
+              - type: entity
+                entity: sensor.lueftung_aussen_absolute_feuchte
+          - type: weather-forecast
+            entity: weather.forecast_home
+            forecast_type: hourly
+            show_current: true
+            show_forecast: true
+          - type: markdown
+            title: Prognose 12 h
+            content: |
+              {% set p = state_attr('sensor.lueftung_aussen_prognose', 'stunden') or [] %}
+              {% set d_min = states('input_number.lueftung_delta_min') | float(1) %}
+              {% set ah_wz = states('sensor.lueftung_wohnzimmer_absolute_feuchte') | float(none) %}
+              {% set ah_ke = states('sensor.lueftung_keller_absolute_feuchte') | float(none) %}
+              {% if p | count == 0 %}
+              Noch keine Prognosedaten. Der Sensor aktualisiert sich alle 30 Minuten.
+              {% else %}
+              {% set ahs = p | map(attribute='ah') | list %}
+              {% set lo = ahs | min %}
+              {% set hi = ahs | max %}
+              {% set erste = (p | first).ah %}
+              {% set letzte = (p | last).ah %}
+              {% set ns = namespace(wz=[], ke=[]) %}
+              {% for h in p %}{% set std = as_timestamp(h.zeit) | timestamp_custom('%H', true) %}{% if ah_wz is not none and h.ah <= ah_wz - d_min %}{% set ns.wz = ns.wz + [std] %}{% endif %}{% if ah_ke is not none and h.ah <= ah_ke - d_min %}{% set ns.ke = ns.ke + [std] %}{% endif %}{% endfor %}
+              **Außenluft in den nächsten {{ p | count }} Stunden:** {{ '%.1f' | format(lo) | replace('.', ',') }} bis {{ '%.1f' | format(hi) | replace('.', ',') }} g/m³, {% if letzte < erste - 0.3 %}wird trockener{% elif letzte > erste + 0.3 %}wird feuchter{% else %}bleibt etwa gleich{% endif %}.
+
+              **Wohnzimmer:** {% if ns.wz %}Lüften lohnt um {{ ns.wz | join(', ') }} Uhr.{% else %}in den nächsten 12 h kein Lüftungsfenster.{% endif %}
+              **Keller:** {% if ns.ke %}Lüften lohnt um {{ ns.ke | join(', ') }} Uhr.{% else %}in den nächsten 12 h kein Lüftungsfenster.{% endif %}
+
+              | Uhr | °C | rF | g/m³ | | WZ | Keller |
+              |---:|---:|---:|---:|:---|:---:|:---:|
+              {% for h in p %}
+              {%- set bal = (((h.ah - lo) / ((hi - lo) if hi > lo else 1)) * 7) | round(0) | int -%}
+              | {{ as_timestamp(h.zeit) | timestamp_custom('%H', true) }} | {{ h.temp | round(0) | int }} | {{ h.rh | int }} % | {{ '%.1f' | format(h.ah) | replace('.', ',') }} | {{ '▇' * (bal + 1) }} | {{ '✓' if ah_wz is not none and h.ah <= ah_wz - d_min else '·' }} | {{ '✓' if ah_ke is not none and h.ah <= ah_ke - d_min else '·' }} |
+              {% endfor %}
+              <small>✓ = Außenluft mindestens {{ '%.1f' | format(d_min) | replace('.', ',') }} g/m³ trockener als die Raumluft jetzt. Je länger der Balken, desto feuchter die Außenluft.</small>
+              {% endif %}
+      # ---------------- Verlauf ----------------
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Verlauf 48 h
+            heading_style: title
+            icon: mdi:chart-line
+          - type: history-graph
+            title: Taupunkt (°C)
+            hours_to_show: 48
+            entities:
+              - entity: sensor.lueftung_wohnzimmer_taupunkt
+                name: Wohnzimmer
+              - entity: sensor.lueftung_keller_taupunkt
+                name: Keller
+              - entity: sensor.lueftung_aussen_taupunkt
+                name: Außen
+          - type: history-graph
+            title: Absolute Feuchte (g/m³)
+            hours_to_show: 48
+            entities:
+              - entity: sensor.lueftung_wohnzimmer_absolute_feuchte
+                name: Wohnzimmer
+              - entity: sensor.lueftung_keller_absolute_feuchte
+                name: Keller
+              - entity: sensor.lueftung_aussen_absolute_feuchte
+                name: Außen
+          - type: history-graph
+            title: Feuchtedifferenz innen minus außen (g/m³, positiv = draußen trockener)
+            hours_to_show: 48
+            min_y_axis: -3
+            max_y_axis: 5
+            fit_y_data: true
+            entities:
+              - entity: sensor.lueftung_wohnzimmer_feuchtedifferenz
+                name: Wohnzimmer
+              - entity: sensor.lueftung_keller_feuchtedifferenz
+                name: Keller
+          # Textsensoren und Binärsensoren werden als Zeitleiste gezeichnet:
+          # das ist das Tracking, wann Lüften empfohlen war.
+          - type: history-graph
+            title: Empfehlung
+            hours_to_show: 48
+            entities:
+              - entity: sensor.lueftung_wohnzimmer_status
+                name: Wohnzimmer
+              - entity: sensor.lueftung_keller_status
+                name: Keller
+              - entity: binary_sensor.lueftung_wohnzimmer_empfohlen
+                name: Push Wohnzimmer
+              - entity: binary_sensor.lueftung_keller_empfohlen
+                name: Push Keller
+          - type: statistics-graph
+            title: Relative Feuchte 14 Tage (%)
+            chart_type: line
+            period: hour
+            days_to_show: 14
+            stat_types:
+              - mean
+              - min
+              - max
+            entities:
+              - entity: sensor.hydrometer_humidity
+                name: Wohnzimmer
+              - entity: sensor.eve_room_humidity
+                name: Keller
+      # ---------------- Einstellungen ----------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Einstellungen
+            heading_style: title
+            icon: mdi:tune
+          - type: entities
+            entities:
+              - entity: input_number.lueftung_wohnzimmer_rh_ziel
+              - entity: input_number.lueftung_wohnzimmer_rh_warn
+              - entity: input_number.lueftung_wohnzimmer_volumen
+              - type: divider
+              - entity: input_number.lueftung_keller_rh_ziel
+              - entity: input_number.lueftung_keller_rh_warn
+              - entity: input_number.lueftung_keller_volumen
+              - type: divider
+              - entity: input_number.lueftung_delta_min
+              - type: divider
+              - entity: automation.luftung_wohnzimmer_hinweis_per_push
+                name: Push Wohnzimmer
+              - entity: automation.luftung_keller_hinweis_per_push
+                name: Push Keller
+          - type: markdown
+            title: Legende
+            content: |
+              | Status | Bedeutung |
+              |---|---|
+              | **Lüften empfohlen** | rF über der Warnschwelle und Außenluft mindestens die Mindestdifferenz trockener. Löst nach 30 min den Push aus. |
+              | **Lüften sinnvoll** | rF über dem Zielwert, Außenluft trockener. Lüften bringt etwas, eilt aber nicht. |
+              | **Kaum Nutzen** | Außenluft weniger als die Mindestdifferenz trockener. |
+              | **Nicht lüften - draußen feuchter** | Außenluft enthält mehr Wasser als die Raumluft. |
+              | **Nicht lüften - Kondensatgefahr** | Außen-Taupunkt nahe der Wandtemperatur (Sommerfall im Keller). |
+              | **Alles gut** | rF unter dem Zielwert. |
+              | **Daten veraltet** | Govee > 30 min, Eve Room > 3 h oder Met.no > 3 h ohne neue Werte. Kein Push. |
+
+              Taupunkt und absolute Feuchte nach Magnus (Sonntag 1990). Außenwerte sind Met.no-Modellwerte, keine Messung.

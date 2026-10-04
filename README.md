@@ -16,6 +16,7 @@ A collection of Home Assistant blueprints and automation templates for easy reus
   blueprints, e.g. shell scripts plus `configuration.yaml` and `automations.yaml` parts)
   - `camera_motion_recording/`
   - `circulation_pump/`
+  - `ventilation_advisor/`
 
 ## Quickstart
 
@@ -93,6 +94,17 @@ Runs the circulation pump for 3 minutes at a time, with no fixed times: 10 minut
 each phone alarm until noon if its owner is home, and when someone comes home after at
 least 30 minutes away. One shared throttle keeps runs at least 30 minutes apart. See
 `packages/circulation_pump/DOC.md`.
+
+## Ventilation advisor (dew point and absolute humidity)
+
+Directory: `packages/ventilation_advisor/`
+
+Adds a "Lüftung" dashboard that tells you per room whether opening the windows helps.
+Indoor sensors (Govee H5075 in the living room, Eve Room in the basement) are compared
+with Met.no weather data via dew point and absolute humidity, computed by Jinja macros
+without any custom integration. Includes threshold sliders, a 12-hour outlook from the
+hourly forecast, 48-hour plots, and a push notification when a room is too humid and the
+outside air is actually drier. See `packages/ventilation_advisor/DOC.md`.
 
 ## Device capability check
 
